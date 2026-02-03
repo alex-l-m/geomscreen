@@ -122,23 +122,12 @@ Now we will consider an example where it is convenient to split the ASE action i
 We will do energy calculations on the same molecule, with multiplicities 1 and 3.
 It is therefore convenient to define a "setup function" that sets the calculator, and a separate "action function" that calculates the energy.
 
-We will use an example molecule displaying phosphorescence, and use the triplet energy above the ground state energy to estimate the phosphorescence emission energy.
-
-First, retrieving the molecule.
-
-```python
-import ccdc.io
-reader = ccdc.io.EntryReader('CSD')
-entry = reader.entry('KAVJOH01')
-writer = ccdc.io.MoleculeWriter('KAVJOH01.mol2')
-writer.write(entry.molecule)
-```
-
+We will use [an example molecule](www.ccdc.cam.ac.uk/structures/Search?Ccdcid=KAVJOH01) displaying phosphorescence, and use the triplet energy above the ground state energy to estimate the phosphorescence emission energy.
 For pipelines that read from files, usually it is convenient to begin with a table containing paths, as awkward as it seems when we're running on a single example.
 
 ```
 mol_id,structure_path
-irppy3,KAVJOH01.mol2
+irppy3,test_data/KAVJOH01.mol2
 ```
 
 Then, the pipeline:
