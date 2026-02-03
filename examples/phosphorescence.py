@@ -1,17 +1,16 @@
 from functools import partial
-from tlz.functoolz import compose
 import pandas as pd
 import ray
-from rdkit.Chem.rdmolfiles import MolFromMol2File
 from ase import Atoms
 from ase.optimize import BFGS
 from tblite.ase import TBLite
 from dplutils.pipeline import PipelineGraph
 from dplutils.cli import cli_run
 from dplutils.pipeline.ray import RayStreamGraphExecutor
-from tasks import ase_task, embed_task
+from geomscreen import ase_task, embed_task
 
 def read_mol2(inpath: str) -> Atoms:
+    from rdkit.Chem.rdmolfiles import MolFromMol2File
     rdkit_mol = MolFromMol2File(inpath)
     assert rdkit_mol is not None
     pos = rdkit_mol.GetConformer().GetPositions()
@@ -43,7 +42,7 @@ graph = PipelineGraph([
     ])
 
 executor = RayStreamGraphExecutor(graph,
-        generator=lambda: pd.read_csv("in.csv", chunksize=200),
+        generator=lambda: pd.read_csv("test_data/irppy3.csv", chunksize=200),
 )
 
 cli_run(executor)

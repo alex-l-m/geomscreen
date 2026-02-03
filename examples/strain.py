@@ -1,8 +1,5 @@
 import pandas as pd
 import ray
-from rdkit.Chem.rdmolfiles import MolFromSmiles
-from rdkit.Chem.rdmolops import AddHs
-from rdkit.Chem.rdDistGeom import EmbedMolecule
 from ase import Atoms
 from ase.optimize import BFGS
 from tblite.ase import TBLite
@@ -12,6 +9,9 @@ from dplutils.pipeline.ray import RayStreamGraphExecutor
 from geomscreen import ase_task, embed_task
 
 def rdkit_embed(smiles: str) -> Atoms:
+    from rdkit.Chem.rdmolfiles import MolFromSmiles
+    from rdkit.Chem.rdmolops import AddHs
+    from rdkit.Chem.rdDistGeom import EmbedMolecule
     rdkit_mol_nohs = MolFromSmiles(smiles)
     assert rdkit_mol_nohs is not None
     rdkit_mol = AddHs(rdkit_mol_nohs)
@@ -40,7 +40,7 @@ graph = PipelineGraph([
     ])
 
 executor = RayStreamGraphExecutor(graph,
-        generator=lambda: pd.read_csv("in.csv", chunksize=200),
+        generator=lambda: pd.read_csv("test_data/cycloalkanes.csv", chunksize=200),
 )
 
 cli_run(executor)
