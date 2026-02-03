@@ -72,7 +72,7 @@ Input table `test_data/combustion_reactants.csv`:
 
 Calculating energies:
 
-```{python}
+```python
 {{< include examples/combustion.py >}}
 ```
 
@@ -119,7 +119,7 @@ For pipelines that read from files, usually it is convenient to begin with a tab
 Then, the pipeline:
 
 ```python
-{{< include examples/phosphorescence.py>}}
+{{< include examples/phosphorescence.py >}}
 ```
 
 ```{python}

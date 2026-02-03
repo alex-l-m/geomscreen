@@ -97,10 +97,10 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3 pbc="F F F"\...                  ok   
 
       initial_geom_error  initial_geom_walltime  \
-    0               None             109.604000   
-    1               None               0.742708   
-    2               None               0.557500   
-    3               None               0.456041   
+    0               None             206.068500   
+    1               None               0.770500   
+    2               None               0.591500   
+    3               None               0.456042   
 
                                           optimized_geom optimized_geom_status  \
     0  18\nProperties=species:S:1:pos:R:3:energies:R:...                    ok   
@@ -109,16 +109,16 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3:energies:R:1...                    ok   
 
       optimized_geom_error  optimized_geom_walltime      energy energy_status  \
-    0                 None                60.097917 -516.376359            ok   
-    1                 None                38.547750 -430.329276            ok   
-    2                 None                32.634459 -343.507726            ok   
-    3                 None                10.405750 -257.098332            ok   
+    0                 None                67.228250 -516.376359            ok   
+    1                 None                40.085625 -430.329276            ok   
+    2                 None                32.522292 -343.507726            ok   
+    3                 None                 9.590917 -257.098332            ok   
 
       energy_error  energy_walltime  
-    0         None         2.181125  
-    1         None         1.445625  
-    2         None         1.009500  
-    3         None         0.628792  
+    0         None         2.197291  
+    1         None         1.445666  
+    2         None         1.009666  
+    3         None         0.655416  
 
 The energy per carbon shows the trend in strain energy:
 
@@ -201,18 +201,6 @@ executor = RayStreamGraphExecutor(graph,
 cli_run(executor)
 ```
 
-    2026-02-03 15:43:45,211 INFO worker.py:2007 -- Started a local Ray instance.
-    2026-02-03 15:43:45,216 INFO packaging.py:392 -- Ignoring upload to cluster for these files: [PosixPath('/Users/alexlm/repos/geomscreen/.venv/.gitignore')]
-    2026-02-03 15:43:45,222 INFO packaging.py:691 -- Creating a file package for local module '/Users/alexlm/repos/geomscreen'.
-    2026-02-03 15:43:45,227 INFO packaging.py:392 -- Ignoring upload to cluster for these files: [PosixPath('/Users/alexlm/repos/geomscreen/.venv/.gitignore')]
-    2026-02-03 15:43:45,233 INFO packaging.py:463 -- Pushing file package 'gcs://_ray_pkg_25211be8673685a7.zip' (1.38MiB) to Ray cluster...
-    2026-02-03 15:43:45,235 INFO packaging.py:476 -- Successfully pushed file package 'gcs://_ray_pkg_25211be8673685a7.zip'.
-    /Users/alexlm/repos/geomscreen/.venv/lib/python3.13/site-packages/ray/_private/worker.py:2046: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
-      warnings.warn(
-    (raylet)    Building geomscreen @ file:///private/tmp/ray/session_2026-02-03_15-43-44_310614_67439/runtime_resources/working_dir_files/_ray_pkg_25211be8673685a7
-    (raylet) Uninstalled 1 package in 0.40ms
-    (raylet) Installed 1 package in 0.86ms
-
 We see here that embedding can take a tuple of columns, rather than a
 single column, and store the information as part of the ASE Atoms
 object.
@@ -255,7 +243,54 @@ single example.
 Then, the pipeline:
 
 ``` python
-{{< include examples/phosphorescence.py>}}
+from functools import partial
+import pandas as pd
+import ray
+from ase import Atoms
+from ase.optimize import BFGS
+from tblite.ase import TBLite
+from dplutils.pipeline import PipelineGraph
+from dplutils.cli import cli_run
+from dplutils.pipeline.ray import RayStreamGraphExecutor
+from geomscreen import ase_task, embed_task
+
+def read_mol2(inpath: str) -> Atoms:
+    from rdkit.Chem.rdmolfiles import MolFromMol2File
+    rdkit_mol = MolFromMol2File(inpath)
+    assert rdkit_mol is not None
+    pos = rdkit_mol.GetConformer().GetPositions()
+    elem = [atom.GetSymbol() for atom in rdkit_mol.GetAtoms()]
+    ase_mol = Atoms(positions=pos, symbols=elem)
+    return ase_mol
+
+def setup(multiplicity: int, atoms: Atoms) -> None:
+    atoms.calc = TBLite(multiplicity=multiplicity)
+
+ground_setup = partial(setup, 1)
+triplet_setup = partial(setup, 3)
+
+def optimize_geometry(atoms: Atoms) -> None:
+    opt = BFGS(atoms, logfile=None, trajectory=None)
+    opt.run(fmax=0.02)
+
+def energy(atoms: Atoms) -> float:
+    energy = atoms.get_potential_energy()
+    return float(energy)
+
+ray.init()
+
+graph = PipelineGraph([
+    embed_task(read_mol2, "structure_path", "initial_geom"),
+    ase_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom"),
+    ase_task((ground_setup, energy), "triplet_geom", "ground_energy"),
+    ase_task((triplet_setup, energy), "triplet_geom", "triplet_energy")
+    ])
+
+executor = RayStreamGraphExecutor(graph,
+        generator=lambda: pd.read_csv("test_data/irppy3.csv", chunksize=200),
+)
+
+cli_run(executor)
 ```
 
 This is calculating a vertical excitation energy; that is, both energies
