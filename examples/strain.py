@@ -34,9 +34,9 @@ def energy(atoms: Atoms) -> float:
 ray.init()
 
 graph = PipelineGraph([
-    embed_task(rdkit_embed, 'smiles', 'initial_geom'),
-    ase_task(optimize_geometry, 'initial_geom', 'optimized_geom'),
-    ase_task(energy, 'optimized_geom', 'energy')
+    embed_task(rdkit_embed, "smiles", "initial_geom"),
+    ase_task(optimize_geometry, "initial_geom", "optimized_geom"),
+    ase_task(energy, "optimized_geom", "energy")
     ])
 
 executor = RayStreamGraphExecutor(graph,

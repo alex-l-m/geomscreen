@@ -35,10 +35,10 @@ def energy(atoms: Atoms) -> float:
 ray.init()
 
 graph = PipelineGraph([
-    embed_task(read_mol2, 'structure_path', 'initial_geom'),
-    ase_task((triplet_setup, optimize_geometry), 'initial_geom', 'triplet_geom'),
-    ase_task((ground_setup, energy), 'triplet_geom', 'ground_energy'),
-    ase_task((triplet_setup, energy), 'triplet_geom', 'triplet_energy')
+    embed_task(read_mol2, "structure_path", "initial_geom"),
+    ase_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom"),
+    ase_task((ground_setup, energy), "triplet_geom", "ground_energy"),
+    ase_task((triplet_setup, energy), "triplet_geom", "triplet_energy")
     ])
 
 executor = RayStreamGraphExecutor(graph,

@@ -1,8 +1,6 @@
 ---
 format: gfm
-jupyter: python3
-execute:
-  warning: false
+jupyter: geomscreen
 ---
 
 Library for virtual screening of molecules using geometry-based models.
@@ -17,13 +15,10 @@ Basically, this is a library of dplutils tasks, including tasks for running mode
 
 Beginning with a simple example that requires embedding a SMILES string as a geometry, optimizing the geometry, and computing an energy.
 
-Input table `in.csv`:
+Input table `test_data/cycloalkanes.csv`:
+
 ```
-mol_id,n_c,smiles
-cyclohexane,6,C1CCCCC1
-cyclopentane,5,C1CCCC1
-cyclobutane,4,C1CCC1
-cyclopropane,3,C1CC1
+{{< include test_data/cycloalkanes.csv >}}
 ```
 
 Computing the energies of each:
@@ -35,18 +30,19 @@ Computing the energies of each:
 ```{python}
 #| eval: true
 #| echo: false
-#| output: true
-import runpy
-runpy.run_path('examples/strain.py')
+#| output: false
+!rm *.parquet
+!uv run --active examples/strain.py
 ```
 
 The result is a table with an `energy` column:
 
 ```{python}
 #| eval: true
-#| echo: false
+#| echo: true
 #| output: true
 import pandas as pd
+from glob import glob
 results = pd.concat(
     (pd.read_parquet(infile) for infile in glob("*.parquet")),
     ignore_index=True)
@@ -59,11 +55,6 @@ The energy per carbon shows the trend in strain energy:
 #| eval: true
 #| echo: true
 #| output: true
-from glob import glob
-import pandas as pd
-results = pd.concat(
-    (pd.read_parquet(infile) for infile in glob("*.parquet")),
-    ignore_index=True)
 results['energy_per_c'] = results['energy'] / results['n_c']
 print(results[['mol_id', 'energy_per_c']])
 ```
@@ -73,14 +64,10 @@ print(results[['mol_id', 'energy_per_c']])
 This example shows what to do when the ASE calculator needs to be customized to the molecule.
 We will calculate the combustion energy of methane, which requires taking into account the triplet state of oxygen.
 
-Input table:
+Input table `test_data/combustion_reactants.csv`:
 
 ```
-mol_id,coef,multiplicity,smiles
-methane,-1,1,C
-oxygen,-2,3,O=O
-carbon_dioxide,1,1,O=C=O
-water,2,1,O
+{{< include test_data/combustion_reactants.csv >}}
 ```
 
 Calculating energies:
@@ -92,9 +79,9 @@ Calculating energies:
 ```{python}
 #| eval: true
 #| echo: false
-#| output: true
-import runpy
-runpy.run_path('examples/combustion.py')
+#| output: false
+!rm *.parquet
+!uv run --active examples/combustion.py
 ```
 
 We see here that embedding can take a tuple of columns, rather than a single column, and store the information as part of the ASE Atoms object.
@@ -126,8 +113,7 @@ We will use [an example molecule](www.ccdc.cam.ac.uk/structures/Search?Ccdcid=KA
 For pipelines that read from files, usually it is convenient to begin with a table containing paths, as awkward as it seems when we're running on a single example.
 
 ```
-mol_id,structure_path
-irppy3,test_data/KAVJOH01.mol2
+{{< include test_data/irppy3.csv >}}
 ```
 
 Then, the pipeline:
@@ -139,9 +125,9 @@ Then, the pipeline:
 ```{python}
 #| eval: true
 #| echo: false
-#| output: true
-import runpy
-runpy.run_path('examples/phosphorescence.py')
+#| output: false
+!rm *.parquet
+!uv run --active examples/phosphorescence.py
 ```
 
 This is calculating a vertical excitation energy; that is, both energies are calculated in the triplet geometry.
