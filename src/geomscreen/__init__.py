@@ -120,10 +120,10 @@ def _require_columns(df: pd.DataFrame, cols: tuple[str, ...]) -> None:
         raise ValueError(f"Missing required column(s): {missing}")
 
 
-def _ensure_columns(df: pd.DataFrame, cols: tuple[str, ...], default: object | None = None) -> None:
+def _ensure_columns(df: pd.DataFrame, cols: tuple[str, ...]) -> None:
     for c in cols:
         if c not in df.columns:
-            df[c] = default
+            df[c] = None
 
 
 def _is_unset(val: object) -> bool:
