@@ -167,7 +167,7 @@ def _action_label(action: Action) -> str:
     return getattr(f, "__name__", type(f).__name__)
 
 
-def _run_action(action: Action, atoms: Atoms) -> tuple[ActionResult, Atoms]:
+def _run_action(action: Action, atoms: Atoms, info_fields: dict) -> tuple[ActionResult, Atoms]:
     """Run an Action (callable or ActionSeq) and return (result, current_atoms)."""
 
     if not isinstance(action, tuple):
@@ -177,6 +177,8 @@ def _run_action(action: Action, atoms: Atoms) -> tuple[ActionResult, Atoms]:
     *steps, final = action
 
     for step in steps:
+        # Guarantee all required info present in the atoms.info dict
+        atoms.info.update(info_fields)
         out = step(atoms)
         if out is None:
             continue  # mutated in-place
@@ -187,7 +189,9 @@ def _run_action(action: Action, atoms: Atoms) -> tuple[ActionResult, Atoms]:
             "ActionIntermediateStep must return ase.Atoms or None; "
             f"got {type(out).__name__} from {getattr(step, '__name__', step)!r}"
         )
-
+    # Remove the additional info fields, they're intended to be temporary
+    for k in info_fields:
+        atoms.info.pop(k, None)
     return final(atoms), atoms
 
 
@@ -309,7 +313,9 @@ def _ase_apply(
 
         try:
             with observer.timer(task_name) as t:
-                result, atoms_after = _run_action(action, atoms)
+                # Save the names of the input and output columns to atoms.info
+                colvals = {'_geomscreen_incol': incol, '_geomscreen_outcols': outcols}
+                result, atoms_after = _run_action(action, atoms, colvals)
             row[walltime_col] = t.accum
         except Exception as exc:
             logger.exception(f"[{task_name}] action failed for {label}: {type(exc).__name__}: {exc}")
