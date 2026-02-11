@@ -1,6 +1,6 @@
 ---
 format: gfm
-jupyter: geomscreen
+jupyter: python3
 ---
 
 Library for virtual screening of molecules using geometry-based models.
@@ -119,7 +119,7 @@ For pipelines that read from files, usually it is convenient to begin with a tab
 Then, the pipeline:
 
 ```python
-{{< include examples/phosphorescence.py >}}
+{{< include examples/irppy3_phos.py >}}
 ```
 
 ```{python}
@@ -127,7 +127,7 @@ Then, the pipeline:
 #| echo: false
 #| output: false
 !rm *.parquet
-!uv run --active examples/phosphorescence.py
+!uv run --active examples/irppy3_phos.py
 ```
 
 This is calculating a vertical excitation energy; that is, both energies are calculated in the triplet geometry.
@@ -145,3 +145,38 @@ results = pd.concat(
     ignore_index=True)
 print(results['triplet_energy'] - results['ground_energy'])
 ```
+
+# Example: Filtering
+
+This next example estimates phosphorescence emission energies for the organic phosphorescent molecules from [Yuan et al 2010](https://doi.org/10.1021/jp909388y) and filters to make a table of the three bluest.
+
+```python
+{{< include examples/organic_phos.py >}}
+```
+
+```{python}
+#| eval: true
+#| echo: false
+#| output: false
+!rm *.parquet
+!uv run --active examples/organic_phos.py
+```
+
+Looking at the output:
+
+```{python}
+#| eval: true
+#| echo: true
+#| output: true
+kept = pd.concat(pd.read_parquet(inpath) for inpath in glob("task=rank_lt_3p5/*.parquet"))
+print(kept[["mol_id", "gap", "rank"]])
+```
+
+In this case we also saved the molecules that were filtered out:
+
+```{python}
+discarded = pd.concat(pd.read_parquet(inpath) for inpath in glob("task=rank_ge_3p5/*.parquet"))
+print(discarded[["mol_id", "gap", "rank"]])
+```
+
+This strategy is useful if we want to do another, more expensive calculation on the top ranked molecules, but we also want to be able to look at the results of the fast calculation that was used for filtering.

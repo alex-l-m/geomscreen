@@ -97,10 +97,10 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3 pbc="F F F"\...                  ok   
 
       initial_geom_error  initial_geom_walltime  \
-    0               None             206.068500   
-    1               None               0.770500   
-    2               None               0.591500   
-    3               None               0.456042   
+    0               None             218.349250   
+    1               None               0.737250   
+    2               None               0.546167   
+    3               None               0.470375   
 
                                           optimized_geom optimized_geom_status  \
     0  18\nProperties=species:S:1:pos:R:3:energies:R:...                    ok   
@@ -109,16 +109,16 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3:energies:R:1...                    ok   
 
       optimized_geom_error  optimized_geom_walltime      energy energy_status  \
-    0                 None                67.228250 -516.376359            ok   
-    1                 None                40.085625 -430.329276            ok   
-    2                 None                32.522292 -343.507726            ok   
-    3                 None                 9.590917 -257.098332            ok   
+    0                 None                61.095084 -516.376359            ok   
+    1                 None                39.188042 -430.329276            ok   
+    2                 None                32.416250 -343.507726            ok   
+    3                 None                 9.587208 -257.098332            ok   
 
       energy_error  energy_walltime  
-    0         None         2.197291  
-    1         None         1.445666  
-    2         None         1.009666  
-    3         None         0.655416  
+    0         None         2.227500  
+    1         None         1.513666  
+    2         None         1.074541  
+    3         None         0.672208  
 
 The energy per carbon shows the trend in strain energy:
 
@@ -310,3 +310,115 @@ print(results['triplet_energy'] - results['ground_energy'])
 
     0    0.872714
     dtype: float64
+
+# Example: Filtering
+
+This next example estimates phosphorescence emission energies for the
+organic phosphorescent molecules from [Yuan et al
+2010](https://doi.org/10.1021/jp909388y) and filters to make a table of
+the three bluest.
+
+``` python
+from functools import partial
+import pandas as pd
+import ray
+from ase import Atoms
+from ase.optimize import BFGS
+from tblite.ase import TBLite
+from dplutils.pipeline import PipelineTask, PipelineGraph
+from dplutils.cli import cli_run
+from dplutils.pipeline.ray import RayStreamGraphExecutor
+from geomscreen import ase_task, embed_task, threshold_task
+
+def add_rank(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(rank=df["gap"].rank(ascending=False))
+rank_task = PipelineTask("rank", add_rank)
+
+def add_difference(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(gap=df["triplet_energy"] - df["ground_energy"])
+difference_task = PipelineTask("gap", add_difference)
+
+def embed_smiles(smiles: str) -> Atoms:
+    from rdkit.Chem.rdDistGeom import EmbedMolecule
+    from rdkit.Chem.rdmolfiles import MolFromSmiles
+    from rdkit.Chem.rdmolops import AddHs
+    rdkit_mol = MolFromSmiles(smiles)
+    rdkit_mol = AddHs(rdkit_mol)
+    EmbedMolecule(rdkit_mol)
+    pos = rdkit_mol.GetConformer().GetPositions()
+    elem = [atom.GetSymbol() for atom in rdkit_mol.GetAtoms()]
+    ase_mol = Atoms(positions=pos, symbols=elem)
+    return ase_mol
+
+def setup(multiplicity: int, atoms: Atoms) -> None:
+    atoms.calc = TBLite(multiplicity=multiplicity)
+
+ground_setup = partial(setup, 1)
+triplet_setup = partial(setup, 3)
+
+def optimize_geometry(atoms: Atoms) -> None:
+    opt = BFGS(atoms, logfile=None, trajectory=None)
+    opt.run(fmax=0.02)
+
+def energy(atoms: Atoms) -> float:
+    energy = atoms.get_potential_energy()
+    return float(energy)
+
+ray.init()
+
+graph = PipelineGraph([
+    embed_task(embed_smiles, "smiles", "initial_geom"),
+    ase_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom"),
+    ase_task((ground_setup, energy), "triplet_geom", "ground_energy"),
+    ase_task((triplet_setup, energy), "triplet_geom", "triplet_energy"),
+    difference_task,
+    rank_task,
+    threshold_task("rank", 3.5, keep_lower_than=True)
+    ])
+
+graph.add_edge(rank_task, threshold_task("rank", 3.5, keep_lower_than=False))
+
+executor = RayStreamGraphExecutor(graph,
+        generator=lambda: pd.read_csv("test_data/organic_phos_smiles_energy.csv", chunksize=200),
+)
+
+cli_run(executor)
+```
+
+Looking at the output:
+
+``` python
+kept = pd.concat(pd.read_parquet(inpath) for inpath in glob("task=rank_lt_3p5/*.parquet"))
+print(kept[["mol_id", "gap", "rank"]])
+```
+
+      mol_id       gap  rank
+    0     bp  2.652823   3.0
+    1   dfbp  2.663454   2.0
+    2    mbb  3.009894   1.0
+    0     bp  2.652823   3.0
+    1   dfbp  2.663454   2.0
+    2    mbb  3.009894   1.0
+
+In this case we also saved the molecules that were filtered out:
+
+``` python
+discarded = pd.concat(pd.read_parquet(inpath) for inpath in glob("task=rank_ge_3p5/*.parquet"))
+print(discarded[["mol_id", "gap", "rank"]])
+```
+
+      mol_id       gap  rank
+    0   dcbp  2.580694   4.0
+    1   dbbp  2.539513   6.0
+    2    bbp  2.576435   5.0
+    3    abp  2.209868   8.0
+    4  dbbp2  2.483136   7.0
+    0   dcbp  2.580694   4.0
+    1   dbbp  2.539513   6.0
+    2    bbp  2.576435   5.0
+    3    abp  2.209868   8.0
+    4  dbbp2  2.483136   7.0
+
+This strategy is useful if we want to do another, more expensive
+calculation on the top ranked molecules, but we also want to be able to
+look at the results of the fast calculation that was used for filtering.
