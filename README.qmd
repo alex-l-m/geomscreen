@@ -31,7 +31,7 @@ Computing the energies of each:
 #| eval: true
 #| echo: false
 #| output: false
-!rm *.parquet
+!rm -f *.parquet
 !uv run --active examples/strain.py
 ```
 
@@ -80,7 +80,7 @@ Calculating energies:
 #| eval: true
 #| echo: false
 #| output: false
-!rm *.parquet
+!rm -f *.parquet
 !uv run --active examples/combustion.py
 ```
 
@@ -126,7 +126,7 @@ Then, the pipeline:
 #| eval: true
 #| echo: false
 #| output: false
-!rm *.parquet
+!rm -f *.parquet
 !uv run --active examples/irppy3_phos.py
 ```
 
@@ -158,7 +158,9 @@ This next example estimates phosphorescence emission energies for the organic ph
 #| eval: true
 #| echo: false
 #| output: false
-!rm *.parquet
+# Delete the output directories
+!rm -rf task=rank_lt_3p5
+!rm -rf task=rank_ge_3p5
 !uv run --active examples/organic_phos.py
 ```
 

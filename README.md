@@ -97,10 +97,10 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3 pbc="F F F"\...                  ok   
 
       initial_geom_error  initial_geom_walltime  \
-    0               None             218.349250   
-    1               None               0.737250   
-    2               None               0.546167   
-    3               None               0.470375   
+    0               None             357.965583   
+    1               None               0.761583   
+    2               None               0.597375   
+    3               None               0.499083   
 
                                           optimized_geom optimized_geom_status  \
     0  18\nProperties=species:S:1:pos:R:3:energies:R:...                    ok   
@@ -109,16 +109,16 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3:energies:R:1...                    ok   
 
       optimized_geom_error  optimized_geom_walltime      energy energy_status  \
-    0                 None                61.095084 -516.376359            ok   
-    1                 None                39.188042 -430.329276            ok   
-    2                 None                32.416250 -343.507726            ok   
-    3                 None                 9.587208 -257.098332            ok   
+    0                 None                73.083584 -516.376359            ok   
+    1                 None                40.588042 -430.329276            ok   
+    2                 None                35.154958 -343.507726            ok   
+    3                 None                 9.914125 -257.098332            ok   
 
       energy_error  energy_walltime  
-    0         None         2.227500  
-    1         None         1.513666  
-    2         None         1.074541  
-    3         None         0.672208  
+    0         None         2.304250  
+    1         None         1.526542  
+    2         None         1.057834  
+    3         None         0.699584  
 
 The energy per carbon shows the trend in strain energy:
 
@@ -396,9 +396,6 @@ print(kept[["mol_id", "gap", "rank"]])
     0     bp  2.652823   3.0
     1   dfbp  2.663454   2.0
     2    mbb  3.009894   1.0
-    0     bp  2.652823   3.0
-    1   dfbp  2.663454   2.0
-    2    mbb  3.009894   1.0
 
 In this case we also saved the molecules that were filtered out:
 
@@ -408,11 +405,6 @@ print(discarded[["mol_id", "gap", "rank"]])
 ```
 
       mol_id       gap  rank
-    0   dcbp  2.580694   4.0
-    1   dbbp  2.539513   6.0
-    2    bbp  2.576435   5.0
-    3    abp  2.209868   8.0
-    4  dbbp2  2.483136   7.0
     0   dcbp  2.580694   4.0
     1   dbbp  2.539513   6.0
     2    bbp  2.576435   5.0
