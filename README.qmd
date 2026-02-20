@@ -182,3 +182,38 @@ print(discarded[["mol_id", "gap", "rank"]])
 ```
 
 This strategy is useful if we want to do another, more expensive calculation on the top ranked molecules, but we also want to be able to look at the results of the fast calculation that was used for filtering.
+
+# Example: Batching
+
+The style we have used so far is inefficient when using a GPU.
+The FAIRChem library provides an interface to ASE that enables batching for more efficient GPU usage.
+To use it, we need a separate task.
+Running the same organic phosphors, but batching with FAIRChem.
+This example uses CPU, although the motivation for this pattern is GPU use.
+
+```python
+{{< include examples/batched.py >}}
+```
+
+```{python}
+#| eval: true
+#| echo: false
+#| output: false
+!rm -f *.parquet
+!uv run --active examples/batched.py
+```
+
+```{python}
+#| eval: true
+#| echo: true
+#| output: true
+import pandas as pd
+from glob import glob
+results = pd.concat(
+    (pd.read_parquet(infile, columns=["mol_id", "ground_energy", "triplet_energy"])
+    for infile in glob("*.parquet")),
+    ignore_index=True)
+results["gap"] = results["triplet_energy"] - results["ground_energy"]
+gap_only = results[["mol_id", "gap"]]
+print(gap_only)
+```

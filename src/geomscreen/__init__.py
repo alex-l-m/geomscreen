@@ -62,6 +62,8 @@ from pandas.api.typing.aliases import Scalar
 from dplutils import observer
 from dplutils.pipeline import PipelineTask
 
+from fairchem.core.units.mlip_unit.predict import BatchServerPredictUnit
+from fairchem.core.calculate import InferenceBatcher
 
 # -----------------------------------------------------------------------------
 # Types (mirrors geomscreen/tasks.pyi)
@@ -85,6 +87,10 @@ ActionIntermediateStep = Callable[[Atoms], GeomAction]
 ActionSeq = tuple[*tuple[ActionIntermediateStep, ...], ActionFunc]
 Action = ActionFunc | ActionSeq
 
+BatchActionFunc = Callable[[Atoms, BatchServerPredictUnit], ActionResult]
+BatchActionSetup = Callable[[Atoms, BatchServerPredictUnit], GeomAction]
+BatchActionSeq = tuple[BatchActionSetup, *tuple[ActionIntermediateStep, ...], ActionFunc]
+BatchAction = BatchActionFunc | BatchActionSeq
 
 # -----------------------------------------------------------------------------
 # Logging (match bluephos default format)
@@ -389,7 +395,7 @@ def _filter_apply(
 
 
 # -----------------------------------------------------------------------------
-# Public API (signatures must match geomscreen/tasks.pyi)
+# Public API
 # -----------------------------------------------------------------------------
 
 def ase_task(
@@ -490,6 +496,14 @@ def ase_task(
     func = partial(_ase_apply, action, incol, outcols)
     return PipelineTask(name, func, **task_kwargs)
 
+def fairchem_task(
+    action: BatchAction,
+    incol: ColName,
+    outcol: ColNames,
+    batcher: Callable[[], InferenceBatcher],
+    **task_kwargs: Any,
+) -> PipelineTask:
+    ...
 
 def filter_task(
     predicate: Callable[..., bool],

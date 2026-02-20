@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "ase>=3.23",
     "dplutils>=0.8.2",
+    "fairchem-core>=2.14.0",
     "pandas>=3",
 ]
 
