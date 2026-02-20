@@ -168,7 +168,7 @@ def _assign_failure(row: pd.Series, outcols: tuple[str, ...]) -> pd.Series:
     return row
 
 
-def _action_label(action: Action) -> str:
+def _action_label(action: Action | BatchAction) -> str:
     f = action[-1] if isinstance(action, tuple) else action
     return getattr(f, "__name__", type(f).__name__)
 
@@ -199,6 +199,51 @@ def _run_action(action: Action, atoms: Atoms, info_fields: dict) -> tuple[Action
     for k in info_fields:
         atoms.info.pop(k, None)
     return final(atoms), atoms
+
+
+def _run_batch_action(
+    action: BatchAction,
+    atoms: Atoms,
+    predict_unit: BatchServerPredictUnit,
+    info_fields: dict,
+) -> tuple[ActionResult, Atoms]:
+    """Run a FAIRChem batched Action and return (result, current_atoms).
+
+    `BatchAction` mirrors the `ase_task` Action API, but the first step (or the
+    entire callable) additionally receives a `BatchServerPredictUnit`.
+
+    Cleanup: any `info_fields` injected into `atoms.info` are removed before
+    returning.
+    """
+
+    # Callable form: action(atoms, predict_unit) -> ActionResult
+    if not isinstance(action, tuple):
+        atoms.info.update(info_fields)
+        try:
+            return action(atoms, predict_unit), atoms
+        finally:
+            for k in info_fields:
+                atoms.info.pop(k, None)
+
+    # Tuple form: (setup_step, *intermediate_steps, final)
+    setup_step, *rest = action
+
+    atoms.info.update(info_fields)
+    try:
+        out = setup_step(atoms, predict_unit)
+        if out is not None and not isinstance(out, Atoms):
+            raise TypeError(
+                "BatchActionSetup must return ase.Atoms or None; "
+                f"got {type(out).__name__} from {getattr(setup_step, '__name__', setup_step)!r}"
+            )
+        if isinstance(out, Atoms):
+            atoms = out
+
+        # The remaining steps are a standard geomscreen `Action`.
+        return _run_action(tuple(rest), atoms, info_fields)
+    finally:
+        for k in info_fields:
+            atoms.info.pop(k, None)
 
 
 # -----------------------------------------------------------------------------
@@ -376,6 +421,134 @@ def _ase_apply(
     return df.apply(one_row, axis=1)
 
 
+def _fairchem_apply(
+    action: BatchAction,
+    incol: str,
+    outcols: tuple[str, ...],
+    batcher_factory: Callable[[], InferenceBatcher],
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Run a FAIRChem-batched action over a dataframe chunk.
+
+    This is analogous to `_ase_apply`, but executes rows concurrently using a
+    shared :class:`fairchem.core.calculate.InferenceBatcher`.
+
+    Note: batching only helps when multiple rows are executed concurrently.
+    """
+
+    _require_columns(df, (incol,))
+    _ensure_columns(df, outcols)
+
+    task_name = (outcols[0] if len(outcols) == 1 else "__".join(outcols)) or _action_label(action)
+    status_col = f"{task_name}_status"
+    error_col = f"{task_name}_error"
+    walltime_col = f"{task_name}_walltime"
+    _ensure_columns(df, (status_col, error_col, walltime_col))
+
+    # Fast path: nothing to do.
+    todo = df[status_col].apply(_is_unset)
+    if not bool(todo.any()):
+        return df
+
+    # Mark missing-input rows (only among those not already completed).
+    missing_geom = todo & df[incol].apply(_is_unset)
+    if bool(missing_geom.any()):
+        idx = df.index[missing_geom]
+        if len(outcols) > 0:
+            df.loc[idx, list(outcols)] = pd.NA
+        df.loc[idx, status_col] = "missing_input"
+        df.loc[idx, error_col] = "missing_input"
+        df.loc[idx, walltime_col] = None
+
+    # Rows that need actual computation.
+    work = todo & ~df[incol].apply(_is_unset)
+    if not bool(work.any()):
+        return df
+
+    # Resolve the batcher inside the worker process.
+    b = batcher_factory()
+    predict_unit = b.batch_predict_unit
+
+    colvals = {"_geomscreen_incol": incol, "_geomscreen_outcols": outcols}
+
+    def run_one(idx_and_geom: tuple[object, object]) -> tuple[object, dict[str, object]]:
+        idx, raw_geom = idx_and_geom
+        rid = str(idx)
+
+        try:
+            atoms = _read_extxyz(str(raw_geom))
+        except Exception as exc:
+            logger.exception(
+                f"[{task_name}] failed to parse extxyz for {rid}: {type(exc).__name__}: {exc}"
+            )
+            out: dict[str, object] = {c: pd.NA for c in outcols}
+            out.update({status_col: "error", error_col: f"{type(exc).__name__}: {exc}", walltime_col: None})
+            return idx, out
+
+        atoms.info.setdefault("name", rid)
+        label = str(atoms.info.get("name", rid))
+
+        try:
+            with observer.timer(task_name) as t:
+                result, atoms_after = _run_batch_action(action, atoms, predict_unit, colvals)
+            walltime = t.accum
+        except Exception as exc:
+            logger.exception(f"[{task_name}] action failed for {label}: {type(exc).__name__}: {exc}")
+            out = {c: pd.NA for c in outcols}
+            out.update({status_col: "error", error_col: f"{type(exc).__name__}: {exc}", walltime_col: None})
+            return idx, out
+
+        out: dict[str, object] = {walltime_col: walltime}
+
+        # No outputs requested: still record completion.
+        if len(outcols) == 0:
+            out.update({status_col: "ok", error_col: None})
+            return idx, out
+
+        # Multi-output: tuple return must align to outcols.
+        if isinstance(result, tuple):
+            if len(result) != len(outcols):
+                raise ValueError(
+                    f"action returned {len(result)} outputs but outcol has {len(outcols)} columns"
+                )
+
+            for c, item in zip(outcols, result):
+                if isinstance(item, Atoms):
+                    out[c] = _write_extxyz(item)
+                else:
+                    out[c] = item if item is not None else pd.NA
+
+            out[status_col] = "partial" if any(item is None for item in result) else "ok"
+            out[error_col] = None
+            return idx, out
+
+        # Single-output: must have exactly one outcol.
+        if len(outcols) != 1:
+            raise TypeError(
+                f"action returned a single value but outcol has {len(outcols)} columns; "
+                "return a tuple to fill multiple outcols"
+            )
+
+        outcol = outcols[0]
+        if isinstance(result, Atoms):
+            out[outcol] = _write_extxyz(result)
+        elif result is None:
+            out[outcol] = _write_extxyz(atoms_after)
+        else:
+            out[outcol] = result
+
+        out[status_col] = "ok"
+        out[error_col] = None
+        return idx, out
+
+    items = [(idx, df.at[idx, incol]) for idx in df.index[work]]
+    for idx, updates in b.executor.map(run_one, items):
+        for col, val in updates.items():
+            df.at[idx, col] = val
+
+    return df
+
+
 def _filter_apply(
     incols: tuple[str, ...],
     predicate: Callable[..., bool],
@@ -503,7 +676,53 @@ def fairchem_task(
     batcher: Callable[[], InferenceBatcher],
     **task_kwargs: Any,
 ) -> PipelineTask:
-    ...
+    """Create a `PipelineTask` that runs a FAIRChem-batched ASE workflow.
+
+    This is the FAIRChem analogue of :func:`ase_task`.
+
+    The only difference is that execution happens concurrently (within the
+    worker process) via a shared :class:`fairchem.core.calculate.InferenceBatcher`,
+    enabling FAIRChem to batch model inference across multiple simulations.
+
+    Parameters
+    ----------
+    action
+        Either:
+
+        - a :class:`BatchActionFunc` of the form ``(atoms, predict_unit) -> ActionResult``
+        - or a :class:`BatchActionSeq` (a tuple of callables).
+
+        In a sequence, the first step is a FAIRChem-specific setup step:
+
+        - ``setup(atoms, predict_unit) -> Atoms | None``
+
+        It typically attaches a :class:`~fairchem.core.calculate.FAIRChemCalculator`
+        built from the provided ``predict_unit``. Subsequent steps are standard
+        geomscreen/ASE actions that accept only ``Atoms``.
+
+    incol
+        Input geometry column (single-frame extxyz strings).
+    outcol
+        Output column name(s). Semantics are identical to :func:`ase_task`.
+    batcher
+        Factory returning an :class:`~fairchem.core.calculate.InferenceBatcher`.
+
+        Passing a factory (rather than an instance) avoids pickling executors
+        and makes it easy to cache the batcher per worker process (e.g. with
+        ``functools.lru_cache``).
+    **task_kwargs
+        Forwarded to :class:`dplutils.pipeline.PipelineTask`.
+
+    Returns
+    -------
+    PipelineTask
+        A configured task that can be included in a :class:`~dplutils.pipeline.PipelineGraph`.
+    """
+
+    outcols = _as_cols(outcol)
+    name = (outcols[0] if len(outcols) == 1 else "__".join(outcols)) or _action_label(action)
+    func = partial(_fairchem_apply, action, incol, outcols, batcher)
+    return PipelineTask(name, func, **task_kwargs)
 
 def filter_task(
     predicate: Callable[..., bool],
@@ -673,6 +892,7 @@ def embed_task(
 
 __all__ = [
     "ase_task",
+    "fairchem_task",
     "embed_task",
     "filter_task",
     "threshold_task",
