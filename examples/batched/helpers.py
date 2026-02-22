@@ -1,15 +1,9 @@
-from functools import partial, lru_cache
-import pandas as pd
-import ray
+from functools import lru_cache
 from ase import Atoms
 from ase.optimize import BFGS
 from fairchem.core import pretrained_mlip
 from fairchem.core.units.mlip_unit.predict import BatchServerPredictUnit
 from fairchem.core.calculate import InferenceBatcher
-from dplutils.pipeline import PipelineTask, PipelineGraph
-from dplutils.cli import cli_run
-from dplutils.pipeline.ray import RayStreamGraphExecutor
-from geomscreen import fairchem_task, embed_task
 
 @lru_cache(maxsize=1)
 def get_batcher() -> InferenceBatcher:
@@ -38,9 +32,6 @@ def embed_smiles(smiles: str) -> Atoms:
     ase_mol = Atoms(positions=pos, symbols=elem)
     return ase_mol
 
-ground_setup = partial(setup, 1)
-triplet_setup = partial(setup, 3)
-
 def optimize_geometry(atoms: Atoms) -> None:
     opt = BFGS(atoms, logfile=None, trajectory=None)
     opt.run(fmax=0.02)
@@ -48,18 +39,3 @@ def optimize_geometry(atoms: Atoms) -> None:
 def energy(atoms: Atoms) -> float:
     energy = atoms.get_potential_energy()
     return float(energy)
-
-ray.init()
-
-graph = PipelineGraph([
-    embed_task(embed_smiles, "smiles", "initial_geom"),
-    fairchem_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom", batcher=get_batcher, num_cpus=8),
-    fairchem_task((ground_setup, energy), "triplet_geom", "ground_energy", batcher=get_batcher, num_cpus=8),
-    fairchem_task((triplet_setup, energy), "triplet_geom", "triplet_energy", batcher=get_batcher, num_cpus=8),
-    ])
-
-executor = RayStreamGraphExecutor(graph,
-        generator=lambda: pd.read_csv("test_data/organic_phos_smiles_energy.csv", chunksize=200),
-)
-
-cli_run(executor)
