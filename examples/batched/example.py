@@ -9,7 +9,7 @@ from helpers import get_batcher, setup, embed_smiles, optimize_geometry, energy
 
 ground_setup = partial(setup, 1)
 triplet_setup = partial(setup, 3)
-ray.init()
+ray.init(address="local", num_cpus=24, num_gpus=1, include_dashboard=False)
 
 graph = PipelineGraph([
     embed_task(embed_smiles, "smiles", "initial_geom"),
