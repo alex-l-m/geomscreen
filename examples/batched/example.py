@@ -13,9 +13,9 @@ ray.init(address="local", num_cpus=24, num_gpus=1, include_dashboard=False)
 
 graph = PipelineGraph([
     embed_task(embed_smiles, "smiles", "initial_geom"),
-    fairchem_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom", batcher=get_batcher, num_cpus=8),
-    fairchem_task((ground_setup, energy), "triplet_geom", "ground_energy", batcher=get_batcher, num_cpus=8),
-    fairchem_task((triplet_setup, energy), "triplet_geom", "triplet_energy", batcher=get_batcher, num_cpus=8),
+    fairchem_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom", batcher=get_batcher, num_cpus=8, num_gpus=1),
+    fairchem_task((ground_setup, energy), "triplet_geom", "ground_energy", batcher=get_batcher, num_cpus=8, num_gpus=1),
+    fairchem_task((triplet_setup, energy), "triplet_geom", "triplet_energy", batcher=get_batcher, num_cpus=8, num_gpus=1),
     ])
 
 executor = RayStreamGraphExecutor(graph,
