@@ -189,7 +189,6 @@ The style we have used so far is inefficient when using a GPU.
 The FAIRChem library provides an interface to ASE that enables batching for more efficient GPU usage.
 To use it, we need a separate task.
 Running the same organic phosphors, but batching with FAIRChem.
-This example uses CPU, although the motivation for this pattern is GPU use.
 
 ```python
 {{< include examples/batched.py >}}

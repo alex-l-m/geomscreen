@@ -9,7 +9,7 @@ from fairchem.core.calculate import InferenceBatcher
 def get_batcher() -> InferenceBatcher:
     from fairchem.core.calculate import InferenceBatcher
 
-    predictor = pretrained_mlip.get_predict_unit("uma-s-1p1", device="cpu")
+    predictor = pretrained_mlip.get_predict_unit("uma-s-1p1", device="cuda")
     batcher = InferenceBatcher(predictor, concurrency_backend_options={'max_workers': 8})
     return batcher
 
