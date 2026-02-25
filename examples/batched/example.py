@@ -7,15 +7,20 @@ from dplutils.pipeline.ray import RayStreamGraphExecutor
 from geomscreen import fairchem_task, embed_task
 from helpers import get_batcher, setup, embed_smiles, optimize_geometry, energy
 
+# Ensure 0-GPU Ray tasks still see CUDA
+# Shouldn't be required in future ray versions
+# Required for construction of the FAIRChem calculator
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+
 ground_setup = partial(setup, 1)
 triplet_setup = partial(setup, 3)
 ray.init(address="local", num_cpus=24, num_gpus=1, include_dashboard=False)
 
 graph = PipelineGraph([
     embed_task(embed_smiles, "smiles", "initial_geom"),
-    fairchem_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom", batcher=get_batcher, num_cpus=8, num_gpus=1),
-    fairchem_task((ground_setup, energy), "triplet_geom", "ground_energy", batcher=get_batcher, num_cpus=8, num_gpus=1),
-    fairchem_task((triplet_setup, energy), "triplet_geom", "triplet_energy", batcher=get_batcher, num_cpus=8, num_gpus=1),
+    fairchem_task((triplet_setup, optimize_geometry), "initial_geom", "triplet_geom", batcher=get_batcher, num_cpus=1, num_gpus=0),
+    fairchem_task((ground_setup, energy), "triplet_geom", "ground_energy", batcher=get_batcher, num_cpus=1, num_gpus=0),
+    fairchem_task((triplet_setup, energy), "triplet_geom", "triplet_energy", batcher=get_batcher, num_cpus=1, num_gpus=0),
     ])
 
 executor = RayStreamGraphExecutor(graph,
