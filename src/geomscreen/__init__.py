@@ -72,7 +72,7 @@ from fairchem.core.units.mlip_unit.predict import (
 from ray import serve
 
 # -----------------------------------------------------------------------------
-# Types (mirrors geomscreen/tasks.pyi)
+# Types
 # -----------------------------------------------------------------------------
 
 ColName = str
