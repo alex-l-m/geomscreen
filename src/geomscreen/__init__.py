@@ -51,7 +51,9 @@ column name.
 import io
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from multiprocessing import cpu_count
 from typing import Any, cast
 
 import ase.io
@@ -62,8 +64,12 @@ from pandas.api.typing.aliases import Scalar
 from dplutils import observer
 from dplutils.pipeline import PipelineTask
 
-from fairchem.core.units.mlip_unit.predict import BatchServerPredictUnit
-from fairchem.core.calculate import InferenceBatcher
+from fairchem.core.units.mlip_unit._batch_serve import setup_batch_predict_server
+from fairchem.core.units.mlip_unit.predict import (
+    BatchServerPredictUnit,
+    MLIPPredictUnit,
+)
+from ray import serve
 
 # -----------------------------------------------------------------------------
 # Types (mirrors geomscreen/tasks.pyi)
@@ -425,15 +431,21 @@ def _fairchem_apply(
     action: BatchAction,
     incol: str,
     outcols: tuple[str, ...],
-    batcher_factory: Callable[[], InferenceBatcher],
+    validator_factory: Callable[[], MLIPPredictUnit],
+    server: str,
+    client_max_workers: int | None,
     df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Run a FAIRChem-batched action over a dataframe chunk.
 
     This is analogous to `_ase_apply`, but executes rows concurrently using a
-    shared :class:`fairchem.core.calculate.InferenceBatcher`.
+    local threadpool while forwarding inference to a *separately started*
+    Ray Serve batching server.
 
-    Note: batching only helps when multiple rows are executed concurrently.
+    Notes
+    -----
+    - The Ray Serve app must already be running (see `start_fairchem_batch_server`).
+    - This task should not request GPUs (use GPUs only for the Serve deployment).
     """
 
     _require_columns(df, (incol,))
@@ -465,9 +477,14 @@ def _fairchem_apply(
     if not bool(work.any()):
         return df
 
-    # Resolve the batcher inside the worker process.
-    b = batcher_factory()
-    predict_unit = b.batch_predict_unit
+    # Connect to an already-running Serve app, and build a local wrapper that uses
+    # the Serve handle for predict(...) and a local predict_unit for validation.
+    local_predict_unit = validator_factory()
+    server_handle = serve.get_app_handle(server)
+    predict_unit = BatchServerPredictUnit(server_handle=server_handle, predict_unit=local_predict_unit)
+
+    max_workers = client_max_workers if client_max_workers is not None else min(cpu_count(), 16)
+    executor = ThreadPoolExecutor(max_workers=max_workers)
 
     colvals = {"_geomscreen_incol": incol, "_geomscreen_outcols": outcols}
 
@@ -542,9 +559,12 @@ def _fairchem_apply(
         return idx, out
 
     items = [(idx, df.at[idx, incol]) for idx in df.index[work]]
-    for idx, updates in b.executor.map(run_one, items):
-        for col, val in updates.items():
-            df.at[idx, col] = val
+    try:
+        for idx, updates in executor.map(run_one, items):
+            for col, val in updates.items():
+                df.at[idx, col] = val
+    finally:
+        executor.shutdown(wait=True)
 
     return df
 
@@ -669,28 +689,76 @@ def ase_task(
     func = partial(_ase_apply, action, incol, outcols)
     return PipelineTask(name, func, **task_kwargs)
 
+def start_fairchem_batch_server(
+    predict_unit: MLIPPredictUnit,
+    *,
+    server: str = "predict-server",
+    max_batch_size: int = 512,
+    batch_wait_timeout_s: float = 0.1,
+    split_oom_batch: bool = True,
+    num_replicas: int = 1,
+    serve_cpus: int | None = 8,
+    serve_gpus: int | None = 1,
+    route_prefix: str = "/predict",
+):
+    """Start a Ray Serve batching server for FAIRChem inference.
+
+    This should be called once in the *driver* process, right after `ray.init()`
+    and before the pipeline starts submitting tasks.
+
+    Notes
+    -----
+    - The GPU(s) should be reserved by this Serve deployment (via `serve_gpus`).
+      The individual `fairchem_task` pipeline tasks should use `num_gpus=0`.
+    - `serve_cpus` is the CPU reservation per Serve replica (FAIRChem defaults to 8).
+    """
+    ray_actor_options: dict[str, float] = {}
+    if serve_cpus is not None:
+        ray_actor_options["num_cpus"] = float(serve_cpus)
+    if serve_gpus is not None:
+        ray_actor_options["num_gpus"] = float(serve_gpus)
+
+    return setup_batch_predict_server(
+        predict_unit=predict_unit,
+        max_batch_size=max_batch_size,
+        batch_wait_timeout_s=batch_wait_timeout_s,
+        split_oom_batch=split_oom_batch,
+        num_replicas=num_replicas,
+        ray_actor_options=ray_actor_options,
+        deployment_name=server,
+        route_prefix=route_prefix,
+    )
+
+
 def fairchem_task(
     action: BatchAction,
     incol: ColName,
     outcol: ColNames,
-    batcher: Callable[[], InferenceBatcher],
+    validator: Callable[[], MLIPPredictUnit],
+    *,
+    server: str = "predict-server",
+    client_max_workers: int | None = None,
     **task_kwargs: Any,
 ) -> PipelineTask:
     """Create a `PipelineTask` that runs a FAIRChem-batched ASE workflow.
 
-    This is the FAIRChem analogue of :func:`ase_task`.
-
-    The only difference is that execution happens concurrently (within the
-    worker process) via a shared :class:`fairchem.core.calculate.InferenceBatcher`,
-    enabling FAIRChem to batch model inference across multiple simulations.
+    Expected usage
+    --------------
+    1) Start a Ray Serve batching server once (driver-side) with
+       :func:`start_fairchem_batch_server`.
+    2) Use :func:`fairchem_task` in your pipeline. Each task:
+       - connects to the existing Serve app (`server=...`)
+       - builds a `BatchServerPredictUnit` using the Serve handle plus a *local*
+         predict unit for validation (`validator=...`)
+       - runs rows concurrently in a local threadpool to feed the batch server
 
     Parameters
     ----------
     action
         Either:
 
-        - a :class:`BatchActionFunc` of the form ``(atoms, predict_unit) -> ActionResult``
-        - or a :class:`BatchActionSeq` (a tuple of callables).
+        - a callable of the form ``(atoms, predict_unit) -> ActionResult``, or
+        - an action sequence (a tuple of callables).
 
         In a sequence, the first step is a FAIRChem-specific setup step:
 
@@ -704,25 +772,42 @@ def fairchem_task(
         Input geometry column (single-frame extxyz strings).
     outcol
         Output column name(s). Semantics are identical to :func:`ase_task`.
-    batcher
-        Factory returning an :class:`~fairchem.core.calculate.InferenceBatcher`.
+    validator
+        Factory returning an :class:`~fairchem.core.units.mlip_unit.predict.MLIPPredictUnit`.
 
-        Passing a factory (rather than an instance) avoids pickling executors
-        and makes it easy to cache the batcher per worker process (e.g. with
-        ``functools.lru_cache``).
+        This local predict unit is only used for FAIRChem's `validate_atoms_data`
+        (it mutates `atoms.info`), while all inference runs through the Serve server.
+
+        A common pattern is to construct a CPU predict unit here:
+
+        >>> pretrained_mlip.get_predict_unit("uma-s-1p1", device="cpu")
+
+    server
+        Ray Serve application name (passed to `serve.get_app_handle(server)`).
+    client_max_workers
+        Number of threads used to run rows concurrently inside the worker process.
+        If None, defaults to `min(os.cpu_count(), 16)`.
     **task_kwargs
         Forwarded to :class:`dplutils.pipeline.PipelineTask`.
 
-    Returns
-    -------
-    PipelineTask
-        A configured task that can be included in a :class:`~dplutils.pipeline.PipelineGraph`.
+    Notes
+    -----
+    `fairchem_task` tasks must not request GPUs. GPUs are reserved for the Serve
+    deployment created by :func:`start_fairchem_batch_server`.
     """
+
+    if float(task_kwargs.get("num_gpus", 0) or 0) != 0:
+        raise ValueError(
+            "fairchem_task pipeline tasks must use num_gpus=0. "
+            "Reserve GPUs for the batch server started by start_fairchem_batch_server()."
+        )
+    task_kwargs["num_gpus"] = 0
 
     outcols = _as_cols(outcol)
     name = (outcols[0] if len(outcols) == 1 else "__".join(outcols)) or _action_label(action)
-    func = partial(_fairchem_apply, action, incol, outcols, batcher)
+    func = partial(_fairchem_apply, action, incol, outcols, validator, server, client_max_workers)
     return PipelineTask(name, func, **task_kwargs)
+
 
 def filter_task(
     predicate: Callable[..., bool],

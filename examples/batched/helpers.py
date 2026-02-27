@@ -6,13 +6,12 @@ from rdkit.Chem.rdmolfiles import MolFromSmiles
 from rdkit.Chem.rdmolops import AddHs
 from fairchem.core import pretrained_mlip
 from fairchem.core.units.mlip_unit.predict import BatchServerPredictUnit
-from fairchem.core.calculate import InferenceBatcher
 
 @lru_cache(maxsize=1)
-def get_batcher() -> InferenceBatcher:
-    predictor = pretrained_mlip.get_predict_unit("uma-s-1p1", device="cuda")
-    batcher = InferenceBatcher(predictor, concurrency_backend_options={'max_workers': 8})
-    return batcher
+def get_validator_predict_unit():
+    # Local predict unit used only for FAIRChem's validate_atoms_data.
+    # Inference runs through the Ray Serve batch server.
+    return pretrained_mlip.get_predict_unit("uma-s-1p1", device="cpu")
 
 def setup(multiplicity: int, atoms: Atoms, predictor: BatchServerPredictUnit) -> None:
     from fairchem.core.calculate import FAIRChemCalculator
