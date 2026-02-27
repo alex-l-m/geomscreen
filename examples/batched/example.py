@@ -1,3 +1,4 @@
+import os
 from functools import partial
 
 import pandas as pd
@@ -16,6 +17,12 @@ from helpers import (
     optimize_geometry,
     energy,
 )
+
+# Ensure 0-GPU Ray tasks still see CUDA
+# This will be the default behavior in future ray versions
+# Even though the dplutils task doesn't use a GPU to run the model, it still
+# needs the GPU available to retrieve the results
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
 
 ground_setup = partial(setup, 1)
 triplet_setup = partial(setup, 3)
