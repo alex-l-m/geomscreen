@@ -65,10 +65,7 @@ from dplutils import observer
 from dplutils.pipeline import PipelineTask
 
 from fairchem.core.units.mlip_unit._batch_serve import setup_batch_predict_server
-from fairchem.core.units.mlip_unit.predict import (
-    BatchServerPredictUnit,
-    MLIPPredictUnit,
-)
+from fairchem.core.units.mlip_unit.predict import MLIPPredictUnit
 from ray import serve
 
 # -----------------------------------------------------------------------------
@@ -93,8 +90,8 @@ ActionIntermediateStep = Callable[[Atoms], GeomAction]
 ActionSeq = tuple[*tuple[ActionIntermediateStep, ...], ActionFunc]
 Action = ActionFunc | ActionSeq
 
-BatchActionFunc = Callable[[Atoms, BatchServerPredictUnit], ActionResult]
-BatchActionSetup = Callable[[Atoms, BatchServerPredictUnit], GeomAction]
+BatchActionFunc = Callable[[Atoms, Any], ActionResult]
+BatchActionSetup = Callable[[Atoms, Any], GeomAction]
 BatchActionSeq = tuple[BatchActionSetup, *tuple[ActionIntermediateStep, ...], ActionFunc]
 BatchAction = BatchActionFunc | BatchActionSeq
 
@@ -115,6 +112,36 @@ def _setup_logging(name: str) -> logging.Logger:
 
 
 logger = _setup_logging(__name__)
+
+
+class _ServePredictorProxy:
+    """Small calculator-facing proxy for a FAIRChem Ray Serve app.
+
+    This keeps the client-side object intentionally tiny:
+
+    - ``predict(...)`` forwards to the Serve replica
+    - ``validate_atoms_data(...)`` is a no-op
+    - calculator metadata is fetched once from the server and cached locally
+
+    This is sufficient for the current geomscreen batched example, where the
+    setup step writes any required ``atoms.info`` fields before attaching the
+    calculator.
+    """
+
+    def __init__(self, server_handle: Any):
+        self.server_handle = server_handle
+        self.dataset_to_tasks = self._get_predict_unit_attribute("dataset_to_tasks")
+        self.atom_refs = self._get_predict_unit_attribute("atom_refs")
+        self.inference_settings = self._get_predict_unit_attribute("inference_settings")
+
+    def _get_predict_unit_attribute(self, attribute_name: str) -> Any:
+        return self.server_handle.get_predict_unit_attribute.remote(attribute_name).result()
+
+    def predict(self, data: Any, undo_element_references: bool = True) -> dict:
+        return self.server_handle.predict.remote(data, undo_element_references).result()
+
+    def validate_atoms_data(self, atoms: Atoms, task_name: str) -> None:
+        return None
 
 
 # -----------------------------------------------------------------------------
@@ -210,13 +237,13 @@ def _run_action(action: Action, atoms: Atoms, info_fields: dict) -> tuple[Action
 def _run_batch_action(
     action: BatchAction,
     atoms: Atoms,
-    predict_unit: BatchServerPredictUnit,
+    predict_unit: Any,
     info_fields: dict,
 ) -> tuple[ActionResult, Atoms]:
     """Run a FAIRChem batched Action and return (result, current_atoms).
 
     `BatchAction` mirrors the `ase_task` Action API, but the first step (or the
-    entire callable) additionally receives a `BatchServerPredictUnit`.
+    entire callable) additionally receives a calculator-facing predictor proxy.
 
     Cleanup: any `info_fields` injected into `atoms.info` are removed before
     returning.
@@ -431,7 +458,6 @@ def _fairchem_apply(
     action: BatchAction,
     incol: str,
     outcols: tuple[str, ...],
-    validator_factory: Callable[[], MLIPPredictUnit],
     server: str,
     client_max_workers: int | None,
     df: pd.DataFrame,
@@ -477,11 +503,10 @@ def _fairchem_apply(
     if not bool(work.any()):
         return df
 
-    # Connect to an already-running Serve app, and build a local wrapper that uses
-    # the Serve handle for predict(...) and a local predict_unit for validation.
-    local_predict_unit = validator_factory()
-    server_handle = serve.get_app_handle(server)
-    predict_unit = BatchServerPredictUnit(server_handle=server_handle, predict_unit=local_predict_unit)
+    # Connect to an already-running Serve app and build a tiny local proxy for
+    # FAIRChemCalculator. Inference still runs through the Serve replica; the
+    # local validation hook is intentionally a no-op.
+    predict_unit = _ServePredictorProxy(serve.get_app_handle(server))
 
     max_workers = client_max_workers if client_max_workers is not None else min(cpu_count(), 16)
     executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -734,7 +759,6 @@ def fairchem_task(
     action: BatchAction,
     incol: ColName,
     outcol: ColNames,
-    validator: Callable[[], MLIPPredictUnit],
     *,
     server: str = "predict-server",
     client_max_workers: int | None = None,
@@ -748,8 +772,8 @@ def fairchem_task(
        :func:`start_fairchem_batch_server`.
     2) Use :func:`fairchem_task` in your pipeline. Each task:
        - connects to the existing Serve app (`server=...`)
-       - builds a `BatchServerPredictUnit` using the Serve handle plus a *local*
-         predict unit for validation (`validator=...`)
+       - builds a tiny calculator-facing proxy around the Serve handle
+       - uses a no-op local `validate_atoms_data(...)`
        - runs rows concurrently in a local threadpool to feed the batch server
 
     Parameters
@@ -772,16 +796,6 @@ def fairchem_task(
         Input geometry column (single-frame extxyz strings).
     outcol
         Output column name(s). Semantics are identical to :func:`ase_task`.
-    validator
-        Factory returning an :class:`~fairchem.core.units.mlip_unit.predict.MLIPPredictUnit`.
-
-        This local predict unit is only used for FAIRChem's `validate_atoms_data`
-        (it mutates `atoms.info`), while all inference runs through the Serve server.
-
-        A common pattern is to construct a CPU predict unit here:
-
-        >>> pretrained_mlip.get_predict_unit("uma-s-1p1", device="cpu")
-
     server
         Ray Serve application name (passed to `serve.get_app_handle(server)`).
     client_max_workers
@@ -794,6 +808,11 @@ def fairchem_task(
     -----
     `fairchem_task` tasks must not request GPUs. GPUs are reserved for the Serve
     deployment created by :func:`start_fairchem_batch_server`.
+
+    The local predictor proxy does not perform FAIRChem validation. If your
+    workflow depends on model-specific `validate_atoms_data(...)` behavior, set
+    the required `atoms.info` fields yourself in the setup step before attaching
+    the calculator.
     """
 
     if float(task_kwargs.get("num_gpus", 0) or 0) != 0:
@@ -805,7 +824,7 @@ def fairchem_task(
 
     outcols = _as_cols(outcol)
     name = (outcols[0] if len(outcols) == 1 else "__".join(outcols)) or _action_label(action)
-    func = partial(_fairchem_apply, action, incol, outcols, validator, server, client_max_workers)
+    func = partial(_fairchem_apply, action, incol, outcols, server, client_max_workers)
     return PipelineTask(name, func, **task_kwargs)
 
 

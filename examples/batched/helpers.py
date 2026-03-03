@@ -1,24 +1,19 @@
-from functools import lru_cache
 from ase import Atoms
 from ase.optimize import BFGS
 from rdkit.Chem.rdDistGeom import EmbedMolecule
 from rdkit.Chem.rdmolfiles import MolFromSmiles
 from rdkit.Chem.rdmolops import AddHs
-from fairchem.core import pretrained_mlip
-from fairchem.core.units.mlip_unit.predict import BatchServerPredictUnit
 
-@lru_cache(maxsize=1)
-def get_validator_predict_unit():
-    # Local predict unit used only for FAIRChem's validate_atoms_data.
-    # Inference runs through the Ray Serve batch server.
-    return pretrained_mlip.get_predict_unit("uma-s-1p1", device="cpu")
 
-def setup(multiplicity: int, atoms: Atoms, predictor: BatchServerPredictUnit) -> None:
+def setup(multiplicity: int, atoms: Atoms, predictor) -> None:
     from fairchem.core.calculate import FAIRChemCalculator
-    # Set charge and multiplicity
+
+    # geomscreen's local predictor proxy does not populate OMOL defaults.
+    # Set charge and multiplicity before attaching the calculator.
     atoms.info["charge"] = 0
     atoms.info["spin"] = multiplicity
     atoms.calc = FAIRChemCalculator(predictor, task_name="omol")
+
 
 def embed_smiles(smiles: str) -> Atoms:
     rdkit_mol = MolFromSmiles(smiles)
@@ -29,9 +24,11 @@ def embed_smiles(smiles: str) -> Atoms:
     ase_mol = Atoms(positions=pos, symbols=elem)
     return ase_mol
 
+
 def optimize_geometry(atoms: Atoms) -> None:
     opt = BFGS(atoms, logfile=None, trajectory=None)
     opt.run(fmax=0.02)
+
 
 def energy(atoms: Atoms) -> float:
     energy = atoms.get_potential_energy()

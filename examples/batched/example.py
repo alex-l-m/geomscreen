@@ -11,7 +11,6 @@ from dplutils.pipeline.ray import RayStreamGraphExecutor
 
 from geomscreen import embed_task, fairchem_task, start_fairchem_batch_server
 from helpers import (
-    get_validator_predict_unit,
     setup,
     embed_smiles,
     optimize_geometry,
@@ -47,7 +46,6 @@ graph = PipelineGraph(
             (triplet_setup, optimize_geometry),
             "initial_geom",
             "triplet_geom",
-            validator=get_validator_predict_unit,
             server="predict-server",
             num_cpus=1,
         ),
@@ -55,7 +53,6 @@ graph = PipelineGraph(
             (ground_setup, energy),
             "triplet_geom",
             "ground_energy",
-            validator=get_validator_predict_unit,
             server="predict-server",
             num_cpus=1,
         ),
@@ -63,7 +60,6 @@ graph = PipelineGraph(
             (triplet_setup, energy),
             "triplet_geom",
             "triplet_energy",
-            validator=get_validator_predict_unit,
             server="predict-server",
             num_cpus=1,
         ),
