@@ -54,6 +54,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from multiprocessing import cpu_count
+from types import SimpleNamespace
 from typing import Any, cast
 
 import ase.io
@@ -114,28 +115,42 @@ def _setup_logging(name: str) -> logging.Logger:
 logger = _setup_logging(__name__)
 
 
+_OMOL_DATASET_TO_TASKS = {
+    "omol": [
+        SimpleNamespace(property="energy"),
+        SimpleNamespace(property="forces"),
+    ]
+}
+
+
 class _ServePredictorProxy:
     """Small calculator-facing proxy for a FAIRChem Ray Serve app.
 
-    This keeps the client-side object intentionally tiny:
+    This is intentionally narrow and omol-focused. The important part is that
+    it does *not* fetch raw ``dataset_to_tasks`` from the Serve replica,
+    because those Task objects can pull much heavier state through Ray than the
+    calculator actually needs.
 
-    - ``predict(...)`` forwards to the Serve replica
-    - ``validate_atoms_data(...)`` is a no-op
-    - calculator metadata is fetched once from the server and cached locally
-
-    This is sufficient for the current geomscreen batched example, where the
-    setup step writes any required ``atoms.info`` fields before attaching the
-    calculator.
+    For the current geomscreen example, FAIRChemCalculator only needs enough
+    local metadata to accept ``task_name="omol"`` and expose the usual energy /
+    forces properties. The real inference still happens entirely inside the
+    Serve deployment.
     """
 
     def __init__(self, server_handle: Any):
         self.server_handle = server_handle
-        self.dataset_to_tasks = self._get_predict_unit_attribute("dataset_to_tasks")
-        self.atom_refs = self._get_predict_unit_attribute("atom_refs")
+        self.dataset_to_tasks = _OMOL_DATASET_TO_TASKS
         self.inference_settings = self._get_predict_unit_attribute("inference_settings")
+        self._atom_refs: dict | None | object = None
 
     def _get_predict_unit_attribute(self, attribute_name: str) -> Any:
         return self.server_handle.get_predict_unit_attribute.remote(attribute_name).result()
+
+    @property
+    def atom_refs(self) -> dict | None:
+        if self._atom_refs is None:
+            self._atom_refs = self._get_predict_unit_attribute("atom_refs")
+        return cast(dict | None, self._atom_refs)
 
     def predict(self, data: Any, undo_element_references: bool = True) -> dict:
         return self.server_handle.predict.remote(data, undo_element_references).result()
@@ -503,9 +518,9 @@ def _fairchem_apply(
     if not bool(work.any()):
         return df
 
-    # Connect to an already-running Serve app and build a tiny local proxy for
-    # FAIRChemCalculator. Inference still runs through the Serve replica; the
-    # local validation hook is intentionally a no-op.
+    # Connect to an already-running Serve app and build a tiny omol-focused
+    # proxy for FAIRChemCalculator. Inference still runs through the Serve
+    # replica; the local validation hook is intentionally a no-op.
     predict_unit = _ServePredictorProxy(serve.get_app_handle(server))
 
     max_workers = client_max_workers if client_max_workers is not None else min(cpu_count(), 16)
@@ -772,7 +787,8 @@ def fairchem_task(
        :func:`start_fairchem_batch_server`.
     2) Use :func:`fairchem_task` in your pipeline. Each task:
        - connects to the existing Serve app (`server=...`)
-       - builds a tiny calculator-facing proxy around the Serve handle
+       - builds a tiny omol-focused proxy around the Serve handle
+       - avoids fetching raw FAIRChem `dataset_to_tasks` objects from Serve
        - uses a no-op local `validate_atoms_data(...)`
        - runs rows concurrently in a local threadpool to feed the batch server
 
@@ -809,10 +825,10 @@ def fairchem_task(
     `fairchem_task` tasks must not request GPUs. GPUs are reserved for the Serve
     deployment created by :func:`start_fairchem_batch_server`.
 
-    The local predictor proxy does not perform FAIRChem validation. If your
-    workflow depends on model-specific `validate_atoms_data(...)` behavior, set
-    the required `atoms.info` fields yourself in the setup step before attaching
-    the calculator.
+    The local predictor proxy is intentionally omol-specific and does not
+    perform FAIRChem validation. If your workflow depends on model-specific
+    `validate_atoms_data(...)` behavior, or on non-omol task metadata, set the
+    required `atoms.info` fields yourself and revisit this proxy.
     """
 
     if float(task_kwargs.get("num_gpus", 0) or 0) != 0:
