@@ -97,10 +97,10 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3 pbc="F F F"\...                  ok   
 
       initial_geom_error  initial_geom_walltime  \
-    0               None             357.965583   
-    1               None               0.761583   
-    2               None               0.597375   
-    3               None               0.499083   
+    0               None             655.614453   
+    1               None               1.278042   
+    2               None               0.891481   
+    3               None               0.730401   
 
                                           optimized_geom optimized_geom_status  \
     0  18\nProperties=species:S:1:pos:R:3:energies:R:...                    ok   
@@ -109,16 +109,16 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3:energies:R:1...                    ok   
 
       optimized_geom_error  optimized_geom_walltime      energy energy_status  \
-    0                 None                73.083584 -516.376359            ok   
-    1                 None                40.588042 -430.329276            ok   
-    2                 None                35.154958 -343.507726            ok   
-    3                 None                 9.914125 -257.098332            ok   
+    0                 None               220.903154 -516.376359            ok   
+    1                 None                90.515384 -430.329276            ok   
+    2                 None                80.176452 -343.507726            ok   
+    3                 None                26.716371 -257.098332            ok   
 
       energy_error  energy_walltime  
-    0         None         2.304250  
-    1         None         1.526542  
-    2         None         1.057834  
-    3         None         0.699584  
+    0         None         4.911386  
+    1         None         3.588174  
+    2         None         2.661033  
+    3         None         1.861743  
 
 The energy per carbon shows the trend in strain energy:
 
@@ -217,7 +217,7 @@ rxn_energy = (results['coef'] * results['energy']).sum()
 print(rxn_energy)
 ```
 
-    -12.68289876472727
+    -12.682898764726929
 
 This should be the combustion energy of methane.
 
@@ -308,7 +308,7 @@ results = pd.concat(
 print(results['triplet_energy'] - results['ground_energy'])
 ```
 
-    0    0.872714
+    0    0.872711
     dtype: float64
 
 # Example: Filtering
@@ -395,7 +395,7 @@ print(kept[["mol_id", "gap", "rank"]])
       mol_id       gap  rank
     0     bp  2.652823   3.0
     1   dfbp  2.663454   2.0
-    2    mbb  3.009894   1.0
+    2    mbb  3.009887   1.0
 
 In this case we also saved the molecules that were filtered out:
 
@@ -408,9 +408,157 @@ print(discarded[["mol_id", "gap", "rank"]])
     0   dcbp  2.580694   4.0
     1   dbbp  2.539513   6.0
     2    bbp  2.576435   5.0
-    3    abp  2.209868   8.0
-    4  dbbp2  2.483136   7.0
+    3    abp  2.209851   8.0
+    4  dbbp2  2.483134   7.0
 
 This strategy is useful if we want to do another, more expensive
 calculation on the top ranked molecules, but we also want to be able to
 look at the results of the fast calculation that was used for filtering.
+
+# Example: Batching
+
+The style we have used so far is inefficient when using a GPU. The
+FAIRChem library provides an interface to ASE that enables batching for
+more efficient GPU usage. To use it, we need a separate task. Running
+the same organic phosphors, but batching with FAIRChem.
+
+With these helpers:
+
+``` python
+from ase import Atoms
+from ase.optimize import BFGS
+from rdkit.Chem.rdDistGeom import EmbedMolecule
+from rdkit.Chem.rdmolfiles import MolFromSmiles
+from rdkit.Chem.rdmolops import AddHs
+
+
+def setup(multiplicity: int, atoms: Atoms, predictor) -> None:
+    from fairchem.core.calculate import FAIRChemCalculator
+
+    # geomscreen's local predictor proxy does not populate OMOL defaults.
+    # Set charge and multiplicity before attaching the calculator.
+    atoms.info["charge"] = 0
+    atoms.info["spin"] = multiplicity
+    atoms.calc = FAIRChemCalculator(predictor, task_name="omol")
+
+
+def embed_smiles(smiles: str) -> Atoms:
+    rdkit_mol = MolFromSmiles(smiles)
+    rdkit_mol = AddHs(rdkit_mol)
+    EmbedMolecule(rdkit_mol)
+    pos = rdkit_mol.GetConformer().GetPositions()
+    elem = [atom.GetSymbol() for atom in rdkit_mol.GetAtoms()]
+    ase_mol = Atoms(positions=pos, symbols=elem)
+    return ase_mol
+
+
+def optimize_geometry(atoms: Atoms) -> None:
+    opt = BFGS(atoms, logfile=None, trajectory=None)
+    opt.run(fmax=0.02)
+
+
+def energy(atoms: Atoms) -> float:
+    energy = atoms.get_potential_energy()
+    return float(energy)
+```
+
+Running this code:
+
+``` python
+import os
+from functools import partial
+
+import pandas as pd
+import ray
+from fairchem.core import pretrained_mlip
+
+from dplutils.cli import cli_run
+from dplutils.pipeline import PipelineGraph
+from dplutils.pipeline.ray import RayStreamGraphExecutor
+
+from geomscreen import embed_task, fairchem_task, start_fairchem_batch_server
+from helpers import (
+    setup,
+    embed_smiles,
+    optimize_geometry,
+    energy,
+)
+
+# Ensure 0-GPU Ray tasks still see CUDA
+# This will be the default behavior in future ray versions
+# Even though the dplutils task doesn't use a GPU to run the model, it still
+# needs the GPU available to retrieve the results
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+
+ground_setup = partial(setup, 1)
+triplet_setup = partial(setup, 3)
+
+ray.init(address="local", num_cpus=24, num_gpus=1, include_dashboard=False)
+
+# Start the FAIRChem Ray Serve batch server once (reserves the GPU).
+gpu_predict_unit = pretrained_mlip.get_predict_unit("uma-s-1p1", device="cuda")
+start_fairchem_batch_server(
+    gpu_predict_unit,
+    server="predict-server",
+    serve_cpus=8,
+    serve_gpus=1,
+    max_batch_size=512,
+    batch_wait_timeout_s=0.1,
+)
+
+graph = PipelineGraph(
+    [
+        embed_task(embed_smiles, "smiles", "initial_geom"),
+        fairchem_task(
+            (triplet_setup, optimize_geometry),
+            "initial_geom",
+            "triplet_geom",
+            server="predict-server",
+            num_cpus=1,
+        ),
+        fairchem_task(
+            (ground_setup, energy),
+            "triplet_geom",
+            "ground_energy",
+            server="predict-server",
+            num_cpus=1,
+        ),
+        fairchem_task(
+            (triplet_setup, energy),
+            "triplet_geom",
+            "triplet_energy",
+            server="predict-server",
+            num_cpus=1,
+        ),
+    ]
+)
+
+executor = RayStreamGraphExecutor(
+    graph,
+    generator=lambda: pd.read_csv("test_data/organic_phos_smiles_energy.csv", chunksize=200),
+)
+
+cli_run(executor)
+```
+
+``` python
+import pandas as pd
+from glob import glob
+results = pd.concat(
+    (pd.read_parquet(infile, columns=["mol_id", "ground_energy", "triplet_energy"])
+    for infile in glob("*.parquet")),
+    ignore_index=True)
+results["gap"] = results["triplet_energy"] - results["ground_energy"]
+gap_only = results[["mol_id", "gap"]]
+print(gap_only)
+```
+
+      mol_id       gap
+    0     bp  2.514674
+    1   dfbp  2.498966
+    2   dcbp  2.476420
+    3   dbbp  2.610326
+    4    bbp  2.535451
+    5    abp  1.850357
+    6    mbb  3.015217
+    7  dbbp2  2.365040

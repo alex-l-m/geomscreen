@@ -32,7 +32,7 @@ Computing the energies of each:
 #| echo: false
 #| output: false
 !rm -f *.parquet
-!uv run --active examples/strain.py
+!python examples/strain.py
 ```
 
 The result is a table with an `energy` column:
@@ -81,7 +81,7 @@ Calculating energies:
 #| echo: false
 #| output: false
 !rm -f *.parquet
-!uv run --active examples/combustion.py
+!python examples/combustion.py
 ```
 
 We see here that embedding can take a tuple of columns, rather than a single column, and store the information as part of the ASE Atoms object.
@@ -127,7 +127,7 @@ Then, the pipeline:
 #| echo: false
 #| output: false
 !rm -f *.parquet
-!uv run --active examples/irppy3_phos.py
+!python examples/irppy3_phos.py
 ```
 
 This is calculating a vertical excitation energy; that is, both energies are calculated in the triplet geometry.
@@ -161,7 +161,7 @@ This next example estimates phosphorescence emission energies for the organic ph
 # Delete the output directories
 !rm -rf task=rank_lt_3p5
 !rm -rf task=rank_ge_3p5
-!uv run --active examples/organic_phos.py
+!python examples/organic_phos.py
 ```
 
 Looking at the output:
@@ -190,8 +190,16 @@ The FAIRChem library provides an interface to ASE that enables batching for more
 To use it, we need a separate task.
 Running the same organic phosphors, but batching with FAIRChem.
 
+With these helpers:
+
 ```python
-{{< include examples/batched.py >}}
+{{< include examples/batched/helpers.py >}}
+```
+
+Running this code:
+
+```python
+{{< include examples/batched/example.py >}}
 ```
 
 ```{python}
@@ -199,7 +207,7 @@ Running the same organic phosphors, but batching with FAIRChem.
 #| echo: false
 #| output: false
 !rm -f *.parquet
-!uv run --active examples/batched.py
+!python examples/batched/example.py
 ```
 
 ```{python}
