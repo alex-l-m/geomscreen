@@ -7,7 +7,7 @@ from tblite.ase import TBLite
 from dplutils.pipeline import PipelineTask, PipelineGraph
 from dplutils.cli import cli_run
 from dplutils.pipeline.ray import RayStreamGraphExecutor
-from geomscreen import ase_task, embed_task, threshold_task
+from geomscreen import ase_task, embed_task, ge_task, lt_task
 
 def add_rank(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(rank=df["gap"].rank(ascending=False))
@@ -52,10 +52,10 @@ graph = PipelineGraph([
     ase_task((triplet_setup, energy), "triplet_geom", "triplet_energy"),
     difference_task,
     rank_task,
-    threshold_task("rank", 3.5, keep_lower_than=True)
+    lt_task("rank", 3.5)
     ])
 
-graph.add_edge(rank_task, threshold_task("rank", 3.5, keep_lower_than=False))
+graph.add_edge(rank_task, ge_task("rank", 3.5))
 
 executor = RayStreamGraphExecutor(graph,
         generator=lambda: pd.read_csv("test_data/organic_phos_smiles_energy.csv", chunksize=200),

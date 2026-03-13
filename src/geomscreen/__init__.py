@@ -870,7 +870,9 @@ def filter_task(
         Input column name(s) whose values are passed to `predicate`.
     filter_in
         If True, keep rows where `predicate(...)` is True.
-        If False, keep rows where `predicate(...)` is False.
+        If False, keep the exact complement of the True case. This means rows
+        where `predicate(...)` is False are kept, and rows with missing inputs
+        are also kept because they are treated as not passing the predicate.
     **task_kwargs
         Forwarded to `PipelineTask(...)` (e.g., `batch_size`, `num_cpus`, etc.).
 
@@ -887,7 +889,7 @@ def filter_task(
 
     Examples
     --------
-    Keep rows with blue phosphorescence (can be simplified with threshold_task):
+    Keep rows with blue phosphorescence:
 
     >>> filter_task(lambda e: e > 2.6, "triplet_minus_ground")
 
@@ -901,60 +903,106 @@ def filter_task(
     return PipelineTask(name, partial(_filter_apply, incols, predicate, filter_in), **task_kwargs)
 
 
-def threshold_task(
+def _comparison_task(
     incol: ColNames,
     threshold: float,
-    keep_lower_than: bool,
+    op_name: str,
+    predicate: Callable[[object], bool],
+    *,
+    filter_in: bool = True,
     **task_kwargs: Any,
 ) -> PipelineTask:
-    """Convenience wrapper around `filter_task` for numeric thresholds.
-
-    This is defined *in terms of* `filter_task`: it builds a predicate
-    `x < threshold`, then chooses whether to keep matching rows or the complement.
-
-    Parameters
-    ----------
-    incol
-        Exactly one input column. (If you pass multiple columns, this raises.)
-    threshold
-        Threshold value to compare against.
-    keep_lower_than
-        - True: keep rows where `value < threshold`
-        - False: keep rows where `value >= threshold`
-    **task_kwargs
-        Forwarded to `PipelineTask(...)`.
-
-    Returns
-    -------
-    PipelineTask
-        A filtering task whose name includes the threshold.
-
-    Notes
-    -----
-    The generated predicate uses the raw column value. If values are not
-    comparable to `threshold`, the predicate will raise (and the pipeline will
-    fail), which is usually what you want for misconfigured inputs.
-
-    Examples
-    --------
-    Keep rows with blue phosphorescence:
-
-    >>> threshold_task("triplet_minus_ground", 2.6, keep_lower_than=False)
-    """
+    """Build a named one-column comparison filter in terms of `filter_task`."""
     incols = _as_cols(incol)
     if len(incols) != 1:
-        raise ValueError("threshold_task expects exactly one input column")
+        raise ValueError(f"{op_name}_task expects exactly one input column")
 
-    def pred(x: object) -> bool:
-        return cast(TableValue, x) < threshold
-
-    # Build via filter_task, then rename to a more informative name
-    base_task = filter_task(pred, incol, filter_in=keep_lower_than, **task_kwargs)
+    base_task = filter_task(predicate, incol, filter_in=filter_in, **task_kwargs)
 
     col = incols[0]
-    op = "lt" if keep_lower_than else "ge"
     thr = str(threshold).replace("-", "m").replace(".", "p")
-    return base_task(name=f"{col}_{op}_{thr}")
+    prefix = "" if filter_in else "not_"
+    return base_task(name=f"{col}_{prefix}{op_name}_{thr}")
+
+
+def ge_task(
+    incol: ColNames,
+    threshold: float,
+    *,
+    filter_in: bool = True,
+    **task_kwargs: Any,
+) -> PipelineTask:
+    """Filter rows by `value >= threshold` for exactly one input column.
+
+    Missing values are treated as not passing the comparison. Therefore:
+
+    - `filter_in=True` keeps only rows with a non-missing value satisfying
+      `value >= threshold`
+    - `filter_in=False` keeps the exact complement, i.e. rows where the value
+      is missing or `< threshold`
+    """
+    return _comparison_task(
+        incol,
+        threshold,
+        "ge",
+        lambda x: cast(TableValue, x) >= threshold,
+        filter_in=filter_in,
+        **task_kwargs,
+    )
+
+
+def gt_task(
+    incol: ColNames,
+    threshold: float,
+    *,
+    filter_in: bool = True,
+    **task_kwargs: Any,
+) -> PipelineTask:
+    """Filter rows by `value > threshold` for exactly one input column."""
+    return _comparison_task(
+        incol,
+        threshold,
+        "gt",
+        lambda x: cast(TableValue, x) > threshold,
+        filter_in=filter_in,
+        **task_kwargs,
+    )
+
+
+def le_task(
+    incol: ColNames,
+    threshold: float,
+    *,
+    filter_in: bool = True,
+    **task_kwargs: Any,
+) -> PipelineTask:
+    """Filter rows by `value <= threshold` for exactly one input column."""
+    return _comparison_task(
+        incol,
+        threshold,
+        "le",
+        lambda x: cast(TableValue, x) <= threshold,
+        filter_in=filter_in,
+        **task_kwargs,
+    )
+
+
+def lt_task(
+    incol: ColNames,
+    threshold: float,
+    *,
+    filter_in: bool = True,
+    **task_kwargs: Any,
+) -> PipelineTask:
+    """Filter rows by `value < threshold` for exactly one input column."""
+    return _comparison_task(
+        incol,
+        threshold,
+        "lt",
+        lambda x: cast(TableValue, x) < threshold,
+        filter_in=filter_in,
+        **task_kwargs,
+    )
 
 
 def embed_task(
@@ -1015,5 +1063,8 @@ __all__ = [
     "fairchem_task",
     "embed_task",
     "filter_task",
-    "threshold_task",
+    "ge_task",
+    "gt_task",
+    "le_task",
+    "lt_task",
 ]
