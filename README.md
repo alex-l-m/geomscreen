@@ -97,10 +97,10 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3 pbc="F F F"\...                  ok   
 
       initial_geom_error  initial_geom_walltime  \
-    0               None             655.614453   
-    1               None               1.278042   
-    2               None               0.891481   
-    3               None               0.730401   
+    0               None             102.585846   
+    1               None               1.303472   
+    2               None               0.876995   
+    3               None               0.714976   
 
                                           optimized_geom optimized_geom_status  \
     0  18\nProperties=species:S:1:pos:R:3:energies:R:...                    ok   
@@ -109,16 +109,16 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3:energies:R:1...                    ok   
 
       optimized_geom_error  optimized_geom_walltime      energy energy_status  \
-    0                 None               220.903154 -516.376359            ok   
-    1                 None                90.515384 -430.329276            ok   
-    2                 None                80.176452 -343.507726            ok   
-    3                 None                26.716371 -257.098332            ok   
+    0                 None               139.447088 -516.376359            ok   
+    1                 None                95.621541 -430.329276            ok   
+    2                 None                86.991137 -343.507726            ok   
+    3                 None                28.659565 -257.098332            ok   
 
       energy_error  energy_walltime  
-    0         None         4.911386  
-    1         None         3.588174  
-    2         None         2.661033  
-    3         None         1.861743  
+    0         None         5.633754  
+    1         None         4.007234  
+    2         None         2.966991  
+    3         None         2.142956  
 
 The energy per carbon shows the trend in strain energy:
 
@@ -328,7 +328,7 @@ from tblite.ase import TBLite
 from dplutils.pipeline import PipelineTask, PipelineGraph
 from dplutils.cli import cli_run
 from dplutils.pipeline.ray import RayStreamGraphExecutor
-from geomscreen import ase_task, embed_task, threshold_task
+from geomscreen import ase_task, embed_task, ge_task, lt_task
 
 def add_rank(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(rank=df["gap"].rank(ascending=False))
@@ -373,10 +373,10 @@ graph = PipelineGraph([
     ase_task((triplet_setup, energy), "triplet_geom", "triplet_energy"),
     difference_task,
     rank_task,
-    threshold_task("rank", 3.5, keep_lower_than=True)
+    lt_task("rank", 3.5)
     ])
 
-graph.add_edge(rank_task, threshold_task("rank", 3.5, keep_lower_than=False))
+graph.add_edge(rank_task, ge_task("rank", 3.5))
 
 executor = RayStreamGraphExecutor(graph,
         generator=lambda: pd.read_csv("test_data/organic_phos_smiles_energy.csv", chunksize=200),
@@ -496,7 +496,7 @@ triplet_setup = partial(setup, 3)
 ray.init(address="local", num_cpus=24, num_gpus=1, include_dashboard=False)
 
 # Start the FAIRChem Ray Serve batch server once (reserves the GPU).
-gpu_predict_unit = pretrained_mlip.get_predict_unit("uma-s-1p1", device="cuda")
+gpu_predict_unit = pretrained_mlip.get_predict_unit("uma-s-1p2", device="cuda")
 start_fairchem_batch_server(
     gpu_predict_unit,
     server="predict-server",
@@ -554,11 +554,11 @@ print(gap_only)
 ```
 
       mol_id       gap
-    0     bp  2.514674
-    1   dfbp  2.498966
-    2   dcbp  2.476420
-    3   dbbp  2.610326
-    4    bbp  2.535451
-    5    abp  1.850357
-    6    mbb  3.015217
-    7  dbbp2  2.365040
+    0     bp  2.494904
+    1   dfbp  2.525963
+    2   dcbp  2.514308
+    3   dbbp  2.566979
+    4    bbp  2.558657
+    5    abp  1.136663
+    6    mbb  3.042616
+    7  dbbp2  2.409539
