@@ -29,7 +29,7 @@ triplet_setup = partial(setup, 3)
 ray.init(address="local", num_cpus=24, num_gpus=1, include_dashboard=False)
 
 # Start the FAIRChem Ray Serve batch server once (reserves the GPU).
-gpu_predict_unit = pretrained_mlip.get_predict_unit("uma-s-1p1", device="cuda")
+gpu_predict_unit = pretrained_mlip.get_predict_unit("uma-s-1p2", device="cuda")
 start_fairchem_batch_server(
     gpu_predict_unit,
     server="predict-server",
