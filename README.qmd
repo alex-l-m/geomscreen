@@ -5,11 +5,11 @@ jupyter: python3
 
 Library for virtual screening of molecules using geometry-based models.
 
-Models are run using Atomic Simulation Environment.
+Models are run using Atomic Simulation Environment or FAIRChem.
 
 Screening pipelines are constructed and run using dplutils.
 
-Basically, this is a library of dplutils tasks, including tasks for running models with ASE and tasks for filtering the results.
+Basically, this is a library of dplutils tasks, including tasks for running models with ASE, running models with FAIRCHem in batch mode, and tasks for filtering the results.
 
 # Example: Strain Energy
 

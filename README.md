@@ -2,12 +2,13 @@
 
 Library for virtual screening of molecules using geometry-based models.
 
-Models are run using Atomic Simulation Environment.
+Models are run using Atomic Simulation Environment or FAIRChem.
 
 Screening pipelines are constructed and run using dplutils.
 
 Basically, this is a library of dplutils tasks, including tasks for
-running models with ASE and tasks for filtering the results.
+running models with ASE, running models with FAIRCHem in batch mode, and
+tasks for filtering the results.
 
 # Example: Strain Energy
 
@@ -97,10 +98,10 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3 pbc="F F F"\...                  ok   
 
       initial_geom_error  initial_geom_walltime  \
-    0               None             102.585846   
-    1               None               1.303472   
-    2               None               0.876995   
-    3               None               0.714976   
+    0               None             805.572006   
+    1               None               1.368305   
+    2               None               0.902463   
+    3               None               0.713503   
 
                                           optimized_geom optimized_geom_status  \
     0  18\nProperties=species:S:1:pos:R:3:energies:R:...                    ok   
@@ -109,16 +110,16 @@ print(results)
     3  9\nProperties=species:S:1:pos:R:3:energies:R:1...                    ok   
 
       optimized_geom_error  optimized_geom_walltime      energy energy_status  \
-    0                 None               139.447088 -516.376359            ok   
-    1                 None                95.621541 -430.329276            ok   
-    2                 None                86.991137 -343.507726            ok   
-    3                 None                28.659565 -257.098332            ok   
+    0                 None               242.938818 -516.376359            ok   
+    1                 None                96.884104 -430.329276            ok   
+    2                 None                86.918302 -343.507726            ok   
+    3                 None                28.675593 -257.098332            ok   
 
       energy_error  energy_walltime  
-    0         None         5.633754  
-    1         None         4.007234  
-    2         None         2.966991  
-    3         None         2.142956  
+    0         None         5.121587  
+    1         None         3.846042  
+    2         None         2.903080  
+    3         None         2.075947  
 
 The energy per carbon shows the trend in strain energy:
 
@@ -554,11 +555,11 @@ print(gap_only)
 ```
 
       mol_id       gap
-    0     bp  2.494904
-    1   dfbp  2.525963
-    2   dcbp  2.514308
-    3   dbbp  2.566979
-    4    bbp  2.558657
-    5    abp  1.136663
-    6    mbb  3.042616
-    7  dbbp2  2.409539
+    0     bp  2.495525
+    1   dfbp  2.525986
+    2   dcbp  2.514578
+    3   dbbp  2.566974
+    4    bbp  2.558658
+    5    abp  1.136661
+    6    mbb  3.042604
+    7  dbbp2  2.409532
