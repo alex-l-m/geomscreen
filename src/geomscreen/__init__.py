@@ -65,7 +65,7 @@ from pandas.api.typing.aliases import Scalar
 from dplutils import observer
 from dplutils.pipeline import PipelineTask
 
-from fairchem.core.units.mlip_unit._batch_serve import setup_batch_predict_server
+from fairchem.core.units.mlip_unit.batch_server import setup_batch_predict_server
 from fairchem.core.units.mlip_unit.predict import MLIPPredictUnit
 from ray import serve
 

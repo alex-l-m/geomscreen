@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "ase>=3.23",
     "dplutils>=0.8.2",
-    "fairchem-core>=2.16",
+    "fairchem-core",
     "pandas>=3",
 ]
 
@@ -17,3 +17,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 readme = ["jupyter", "ipykernel", "ray", "rdkit", "tblite", "pyarrow"]
+
+[tool.uv.sources]
+fairchem-core = { path = "../fairchem/packages/fairchem-core", editable = true }
