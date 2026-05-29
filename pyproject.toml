@@ -19,4 +19,4 @@ build-backend = "uv_build"
 readme = ["jupyter", "ipykernel", "ray", "rdkit", "tblite", "pyarrow"]
 
 [tool.uv.sources]
-fairchem-core = { path = "../fairchem/packages/fairchem-core", editable = true }
+fairchem-core = { path = "../fairchem/packages/fairchem-core" }
