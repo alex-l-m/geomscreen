@@ -65,7 +65,11 @@ from pandas.api.typing.aliases import Scalar
 from dplutils import observer
 from dplutils.pipeline import PipelineTask
 
-from fairchem.core.units.mlip_unit.batch_server import setup_batch_predict_server
+from fairchem.core.components.batch_server import (
+    BatchConfig,
+    DeploymentConfig,
+    setup_batch_predict_server,
+)
 from fairchem.core.units.mlip_unit.predict import MLIPPredictUnit
 from ray import serve
 
@@ -760,11 +764,15 @@ def start_fairchem_batch_server(
 
     return setup_batch_predict_server(
         predict_unit=predict_unit,
-        max_batch_size=max_batch_size,
-        batch_wait_timeout_s=batch_wait_timeout_s,
-        split_oom_batch=split_oom_batch,
-        num_replicas=num_replicas,
-        ray_actor_options=ray_actor_options,
+        deployment_config=DeploymentConfig(
+            num_replicas=num_replicas,
+            ray_actor_options=ray_actor_options,
+        ),
+        batch_config=BatchConfig(
+            max_batch_size=max_batch_size,
+            batch_wait_timeout_s=batch_wait_timeout_s,
+            split_oom_batch=split_oom_batch,
+        ),
         deployment_name=server,
         route_prefix=route_prefix,
     )
